@@ -16,7 +16,7 @@ echo "代理端口: $port"
 
 export http_proxy="http://$host_ip:$port"
 
-export https_proxy="https://$host_ip:$port"
+# 代理客户端没有https，否则会报proxyconnect tcp: EOF错误
+export https_proxy="http://$host_ip:$port"
 
 echo '设置完成'
-
