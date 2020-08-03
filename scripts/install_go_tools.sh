@@ -17,5 +17,6 @@ go get -u github.com/stamblerre/gocode
 go get -u github.com/rogpeppe/godef
 go get -u github.com/sqs/goreturns
 go get -u golang.org/x/lint/golint
+go get -u golang.org/x/tools/cmd/goimports
 
 echo "安装完成"
