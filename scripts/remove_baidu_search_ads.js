@@ -12,6 +12,8 @@
 //              try{window.MutationObserver=window.WebKitMutationObserver=window.MozMutationObserver=null}catch(e){}
 //              这个问题是参考issue:
 //              https://github.com/guyujiezi/cicada/issues/3
+//              MutationObserver用法参考: 
+//              https://medium.com/snips-ai/how-to-block-third-party-scripts-with-a-few-lines-of-javascript-f0b08b9c4c0
 // @author skywalker
 // @match https://www.baidu.com/s*
 // @require http://libs.baidu.com/jquery/2.0.0/jquery.min.js
