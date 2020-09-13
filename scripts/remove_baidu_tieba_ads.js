@@ -13,11 +13,14 @@
 
     window.addEventListener('load', (event) => {
          var threadList = $("ul#thread_list")
-         if (threadList.length != 1) {
-             console.log("没有找到ul#thread_list.")
-             return
+         if (threadList.length > 0) {
+             threadList.children("li").filter(":not(.j_thread_list,.thread_top_list_folder)").remove();
          }
 
-        threadList.children("li").filter(":not(.j_thread_list,.thread_top_list_folder)").remove()
+        
+        var threadWrapper = $("div#j_p_postlist");
+        if (threadWrapper.length > 0) {
+            threadWrapper.children("div").filter("div[ad-dom-img=true]").remove();
+        }
     });
 })();
