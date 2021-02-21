@@ -18,5 +18,8 @@ go get -u github.com/rogpeppe/godef
 go get -u github.com/sqs/goreturns
 go get -u golang.org/x/lint/golint
 go get -u golang.org/x/tools/cmd/goimports
+go get -u github.com/go-delve/delve/cmd/dlv
+go get -v github.com/uudashr/gopkgs/v2/cmd/gopkgs
+go get -v golang.org/x/tools/gopls
 
 echo "安装完成"
