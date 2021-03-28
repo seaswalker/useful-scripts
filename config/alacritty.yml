@@ -1,0 +1,63 @@
+# 放在主目录的.config/alacritty目录下
+# 字体配置
+font:  
+  # 常规字体
+  normal:
+    family: "Monaco"  #目前的版本不支持连字
+    # 字体风格
+    # style: Regular
+
+  # 字体大小
+  size: 14
+
+  # 每个字符的间的字间距。"offset.y" 可以控制行距，"offset.x" 可以改变字符间距。
+  offset:
+    x: 1  # 我这里改成 1 了，个人感觉比较舒服
+    y: 0
+
+  # Glyph offset determines the locations of the glyphs within their cells with
+  # the default being at the bottom. Increasing `x` moves the glyph to the
+  # right, increasing `y` moves the glyph upward.
+  # glyph_offset:
+  #  x: 0
+  #  y: 0
+
+  # 细线字体渲染（仅适用于macOS）
+  #
+  # retina 可以设置为 true，非 retina 屏幕建议设置为 false
+  use_thin_strokes: false
+
+scrolling:
+  # 回滚缓冲区中的最大行数,指定“0”将禁用滚动。
+  history: 10000
+  # 滚动行数 
+  multiplier: 5
+
+# Colors (Ayu Dark)
+colors:
+  # Default colors
+  primary:
+    background: '0x0A0E14'
+    foreground: '0xB3B1AD'
+
+  # Normal colors
+  normal:
+    black:   '0x01060E'
+    red:     '0xEA6C73'
+    green:   '0x91B362'
+    yellow:  '0xF9AF4F'
+    blue:    '0x53BDFA'
+    magenta: '0xFAE994'
+    cyan:    '0x90E1C6'
+    white:   '0xC7C7C7'
+
+  # Bright colors
+  bright:
+    black:   '0x686868'
+    red:     '0xF07178'
+    green:   '0xC2D94C'
+    yellow:  '0xFFB454'
+    blue:    '0x59C2FF'
+    magenta: '0xFFEE99'
+    cyan:    '0x95E6CB'
+    white:   '0xFFFFFF'
