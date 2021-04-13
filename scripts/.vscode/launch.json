@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["-p", "~/Projects/test-dependency", "-g", "'org.apache.commons'", "-a", "'commons-math3'"]
+            "args": ["-p", "~/Projects/test-dependency", "-g", "'org.springframework'", "-a", "'spring-webmvc'"]
         }
     ]
 }

@@ -65,15 +65,25 @@ class _PomNode:
         self.id = id
         self.dependency_managements = None
         self.properties = None
+        # 和起始module的关系路径
+        self.context_path = ''
 
 
-def build_module_tree_parent(init_node) -> _PomNode:
+def build_module_tree_parent(init_node, init_base_dir: str = '', init_context_path: str = None) -> _PomNode:
     pom_node = _PomNode(init_node, '', generate_module_id(init_node))
+    pom_node.pom_base_dir = init_base_dir
+
+    if init_context_path is None:
+        pom_node.context_path = pom_node.id
+    else:
+        pom_node.context_path = init_context_path
+
     parent_node = init_node.find("parent", init_node.nsmap)
     while parent_node is not None:
         parent_pom_tree = resolve_parent_pom_path(parent_node)
         node = _PomNode(parent_pom_tree, '',
                         generate_module_id(parent_pom_tree))
+        node.context_path = node.id + " <- " + pom_node.context_path
         node.children_pom.append(pom_node)
         pom_node.parent_pom = node
         pom_node = node
@@ -81,8 +91,15 @@ def build_module_tree_parent(init_node) -> _PomNode:
     return pom_node
 
 
+def inherit_properties(children: {}, parent: {}):
+    for key in parent:
+        if key in children.keys():
+            continue
+        children[key] = parent[key]
+
+
 # 按照依赖顺序自顶向下解析各module
-def parse_module_tree(tree_root: _PomNode):
+def parse_module_tree(tree_root: _PomNode, exclusions=set()):
     # 广度优先遍历
     node_list = [tree_root]
     while len(node_list) > 0:
@@ -92,24 +109,25 @@ def parse_module_tree(tree_root: _PomNode):
             if node.dependency_managements is None:
                 node.dependency_managements = {}
                 if node.parent_pom is not None:
-                    node.dependency_managements.update(
-                        node.parent_pom.dependency_managements)
+                    inherit_properties(
+                        node.dependency_managements, node.parent_pom.dependency_managements)
             if node.properties is None:
                 node.properties = parse_properties(node.pom_dom_tree)
                 if node.parent_pom is not None:
-                    node.properties.update(node.parent_pom.properties)
+                    inherit_properties(
+                        node.properties, node.parent_pom.properties)
 
-            dependency_managent_node = node.pom_dom_tree.find(
-                "dependencyManagent", node.pom_dom_tree.nsmap)
-            if dependency_managent_node is not None:
-                dependencies_node = dependency_managent_node.find(
+            dependency_managment_node = node.pom_dom_tree.find(
+                "dependencyManagement", node.pom_dom_tree.nsmap)
+            if dependency_managment_node is not None:
+                dependencies_node = dependency_managment_node.find(
                     "dependencies", node.pom_dom_tree.nsmap)
                 if dependencies_node is not None:
                     for dependency in dependencies_node.findall('dependency', node.pom_dom_tree.nsmap):
                         group_id = get_group_id(dependency)
                         artifact_id = get_artifact_id(dependency)
                         version = try_parse_property_reference(
-                            get_version(dependency))
+                            node.properties, get_version(dependency))
                         # dependency managent的版本是可以不填的
                         node.dependency_managements[group_id +
                                                     ":" + artifact_id] = version
@@ -122,34 +140,48 @@ def parse_module_tree(tree_root: _PomNode):
             for dependency in dependencies_node.findall("dependency", node.pom_dom_tree.nsmap):
                 group_id = get_group_id(dependency)
                 artifact_id = get_artifact_id(dependency)
+                dependency_key = group_id + ":" + artifact_id
+                if dependency_key in exclusions:
+                    if is_debug_enabled():
+                        print("依赖:[{dependency}]已被排除, context: {context}".format(
+                            dependency=dependency_key, context=node.context_path))
+                    continue
                 version = try_parse_property_reference(
                     node.properties, get_version(dependency))
-                dependency_key = group_id + ":" + artifact_id
-                scope = None
                 if version is None:
                     # 没有填version，那么只可能是(合法的情况)依靠父级pom的dependencyManagement指定版本
                     if dependency_key not in node.dependency_managements.keys():
                         raise Exception("依赖: {dependency}没有版本".format(
                             dependency=dependency_key))
                     version = node.dependency_managements[dependency_key]
-                scope_node = dependency.find("scope", node.pom_dom_tree.nsmap)
-                if scope_node is not None:
-                    scope = scope_node.text
-                parse_dependency(group_id, artifact_id, version, scope)
+                parse_dependency(
+                    dependency, node.pom_dom_tree.nsmap, version, node.context_path, exclusions)
         node_list = new_node_list
 
 
 # 解析一个dependencies中的依赖, 这里还要考虑依赖中的依赖
-def parse_dependency(group_id: str, artifact_id: str, version: str, scope: str):
-    if scope is not None and scope != 'compile':
+def parse_dependency(dependency, nsmap, version: str, context_path: str, exclusions=set()):
+    group_id = get_group_id(dependency)
+    artifact_id = get_artifact_id(dependency)
+    scope_node = dependency.find("scope", nsmap)
+    if scope_node is not None and scope_node.text != 'compile':
         if is_debug_enabled():
-            print("依赖: {groupId}:{artifactId}:{version}的scope为: {scope}, 跳过.".format(groupId=group_id, artifactId=artifact_id, version=version, scope=scope))
+            print("依赖: {groupId}:{artifactId}:{version}的scope为: {scope}, 跳过.".format(
+                groupId=group_id, artifactId=artifact_id, version=version, scope=scope_node.text))
+        return
+
+    optional_node = dependency.find("optional", nsmap)
+    if optional_node is not None and optional_node.text == 'true':
+        if is_debug_enabled():
+            print("依赖: {groupId}:{artifactId}:{version}的optional = true, 跳过.".format(
+                groupId=group_id, artifactId=artifact_id, version=version))
         return
 
     global need_find_group_id
     global need_find_artifact_id
     if group_id == need_find_group_id and artifact_id == need_find_artifact_id:
-        print("发现对指定依赖的引用, 版本: %s" % version)
+        print("[{context_path}]: {group_id}:{artifact_id}:{version}".format(
+            context_path=context_path, group_id=group_id, artifact_id=artifact_id, version=version))
 
     jar_pom_location = resolve_jar_pom_location(group_id, artifact_id, version)
     jar_path = pathlib.Path(jar_pom_location)
@@ -157,9 +189,24 @@ def parse_dependency(group_id: str, artifact_id: str, version: str, scope: str):
         raise Exception("Jar pom路径: %s不存在或者是个目录" % jar_path)
     jar_pom_tree = etree.parse(jar_path.open()).getroot()
 
+    # 解析exclusions
+    exclusions_new = exclusions.copy()
+    exclusions_node = dependency.find("exclusions", nsmap)
+    if exclusions_node is not None:
+        exclusion_nodes = exclusions_node.findall("exclusion", nsmap)
+        for exclusion_node in exclusion_nodes:
+            group_id = get_group_id(exclusion_node)
+            artifact_id = get_artifact_id(exclusion_node)
+            exclusions_new.add(group_id + ":" + artifact_id)
+
     # 构建依赖的jar包的依赖树，和主module的依赖树没有关系
-    tree_root = build_module_tree_parent(jar_pom_tree)
-    parse_module_tree(tree_root)
+    jar_context_path = "jar[{group_id}:{artifact_id}:{version}]<-{context_path}".format(
+        group_id=group_id, artifact_id=artifact_id, version=version,
+        context_path=context_path
+    )
+    tree_root = build_module_tree_parent(
+        jar_pom_tree, init_context_path=jar_context_path)
+    parse_module_tree(tree_root, exclusions=exclusions_new)
 
 
 def resolve_parent_pom_path(parent_node):
@@ -177,6 +224,10 @@ def resolve_parent_pom_path(parent_node):
 
 def parse_properties(xml_root) -> {}:
     result = {}
+    # 特殊处理project.version
+    version_node = xml_root.find("version", xml_root.nsmap)
+    if version_node is not None:
+        result['project.version'] = version_node.text
     properties_node = xml_root.find("properties", xml_root.nsmap)
     if properties_node is None:
         return result
@@ -192,11 +243,12 @@ def parse_properties(xml_root) -> {}:
 def try_parse_property_reference(properties: {}, version: str) -> str:
     if version is None:
         return None
-    if version.startswith("${"):
+    # 可能存在属性引用嵌套的情况
+    while version.startswith("${"):
         property_key = version[2:len(version) - 1]
         if property_key not in properties.keys():
             raise Exception("版本: {version}未找到".format(version=property_key))
-        return properties[property_key]
+        version = properties[property_key]
     return version
 
 
@@ -208,11 +260,10 @@ def build_module_tree(base_dir: str) -> _PomNode:
         raise Exception("路径: %s不是一个合法的pom.xml文件" % pom_path)
     xml_root = etree.parse(pom_file.open()).getroot()
 
-    tree_root = build_module_tree_parent(xml_root)
+    tree_root = build_module_tree_parent(xml_root, base_dir)
     child_parent_node = tree_root
     while len(child_parent_node.children_pom) == 1:
         child_parent_node = child_parent_node.children_pom[0]
-    child_parent_node.pom_base_dir = base_dir
 
     # 向下再根据子module构建pom tree
     queue = Queue()
@@ -232,6 +283,7 @@ def build_module_tree(base_dir: str) -> _PomNode:
             module_dom_tree = etree.parse(module_pom_file.open()).getroot()
             node = _PomNode(module_dom_tree, module_pom_dir,
                             generate_module_id(module_dom_tree))
+            node.context_path = parent_node.context_path + " -> " + node.id
             node.parent_pom = parent_node
             parent_node.children_pom.append(node)
             queue.put(node)
@@ -264,7 +316,8 @@ def main():
     arg_parser.add_argument('-g', help='group id', type=str, dest='groupId')
     arg_parser.add_argument('-a', help='artifact id',
                             type=str, dest='artifactId')
-    arg_parser.add_argument("-X", help='debug模式', dest='debug', action='store_true')
+    arg_parser.add_argument("-X", help='debug模式',
+                            dest='debug', action='store_true')
     args = arg_parser.parse_args()
 
     if args.debug:
@@ -295,19 +348,20 @@ def main():
         print("依赖查询失败: {reason}".format(reason=str(e)))
         return
 
-    print("主Module继承关系: ")
-    stack = LifoQueue()
-    stack.put(tree_head)
-    while not stack.empty():
-        node = stack.get()
-        print("{padding}{groupId}:{artifactId}".format(
-            padding=generate_padding_spaces(node.level),
-            groupId=get_group_id(node.pom_dom_tree),
-            artifactId=get_artifact_id(node.pom_dom_tree))
-        )
-        for childNode in node.children_pom:
-            stack.put(childNode)
-    print("------------------------------------------")
+    if is_debug_enabled():
+        print("主Module继承关系: ")
+        stack = LifoQueue()
+        stack.put(tree_head)
+        while not stack.empty():
+            node = stack.get()
+            print("{padding}{groupId}:{artifactId}".format(
+                padding=generate_padding_spaces(node.level),
+                groupId=get_group_id(node.pom_dom_tree),
+                artifactId=get_artifact_id(node.pom_dom_tree))
+            )
+            for childNode in node.children_pom:
+                stack.put(childNode)
+        print("------------------------------------------")
 
     parse_module_tree(tree_head)
 
