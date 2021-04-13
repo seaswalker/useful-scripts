@@ -11,16 +11,32 @@ from queue import LifoQueue
 
 need_find_group_id = ''
 need_find_artifact_id = ''
+debug_enabled = False
+
+
+def is_debug_enabled() -> bool:
+    global debug_enabled
+    return debug_enabled
+
 
 # 解析指定maven依赖在本地仓库中路径
-
-
 def resolve_jar_pom_location(group_id: str, artifact_id: str, version: str) -> str:
-    return "/~/.m2/repo/" + group_id + "/" + artifact_id + "/" + version + "/" + artifact_id + "-" + version + ".pom"
+    group_id = group_id.replace(".", "/")
+    return "/Users/zhaoxudong/.m2/repo/" + group_id + "/" + artifact_id + "/" + version + "/" + artifact_id + "-" + version + ".pom"
 
 
 def get_group_id(xml_root) -> str:
-    return xml_root.find("groupId", xml_root.nsmap).text
+    group_id_node = xml_root.find("groupId", xml_root.nsmap)
+    # group id不是必填的，可以从parent那里继承
+    # https://maven.apache.org/pom.html
+    if group_id_node is None:
+        parent_node = xml_root.find("parent", xml_root.nsmap)
+        if parent_node is None:
+            raise Exception("未设置group id, 同时也没有设置parent")
+        group_id_node = parent_node.find("groupId", xml_root.nsmap)
+        if group_id_node is None:
+            raise Exception("未设置group id, 同时parent内也没有指定")
+    return group_id_node.text
 
 
 def get_artifact_id(xml_root) -> str:
@@ -38,56 +54,6 @@ def generate_module_id(xml_root) -> str:
     return get_group_id(xml_root) + ":" + get_artifact_id(xml_root)
 
 
-def parse_dependency(module_path, dependency, node_name, args):
-    group_id = dependency.getElementsByTagName("groupId")[0].childNodes[0].data
-    artifact_id = dependency.getElementsByTagName(
-        "artifactId")[0].childNodes[0].data
-    version = ''
-    version_node = dependency.getElementsByTagName("version")
-    if version_node:
-        version = version_node[0].childNodes[0].data
-    if group_id == args.groupId and artifact_id == args.artifactId:
-        print("在路径: %s下发现对指定依赖的引用." % (
-            module_path + ":" + node_name + ":" + group_id + ":" + artifact_id + ":" + version))
-
-    # 找到在maven仓库中jar包的位置
-    if not version:
-        # dependency没有设置version，不进行jar包解析，此时可能是在父module中设置的版本
-        return
-    jar_pom_location = resolve_jar_pom_location(group_id, artifact_id, version)
-    jar_path = pathlib.Path(jar_pom_location)
-    if not jar_path.exists() or jar_path.is_dir():
-        raise Exception("Jar pom路径: %s不存在或者是个目录" % jar_path)
-    jar_pom_tree = xml.dom.minidom.parse(jar_path.open())
-    parse_module_dependencies(jar_pom_tree, args, "")
-
-
-def resolve_parent_pom_path(parent_node):
-    group_id = get_group_id(parent_node)
-    artifact_id = get_artifact_id(parent_node)
-    version = get_version(parent_node)
-    group_id = group_id.replace(".", "/")
-    pom_path = "/Users/zhaoxudong/.m2/repo/" + group_id + "/" + artifact_id + \
-        "/" + version + "/" + artifact_id + "-" + version + ".pom"
-    pom = pathlib.Path(pom_path)
-    if (not pom.exists()) or pom.is_dir():
-        raise Exception("Pom: %s不存在或者是一个目录" % pom_path)
-    return etree.parse(pom.open()).getroot()
-
-
-def parse_properties(xml_root) -> {}:
-    result = {}
-    properties_node = xml_root.find("properties", xml_root.nsmap)
-    if properties_node is None:
-        return result
-    properties = properties_node.findall('*', xml_root.nsmap)
-    for node in properties:
-        # 移除tag前的namespace:
-        # https://stackoverflow.com/questions/18159221/remove-namespace-and-prefix-from-xml-in-python-using-lxml
-        result[etree.QName(node).localname] = node.text
-    return result
-
-
 class _PomNode:
 
     def __init__(self, pom_dom_tree, pom_base_dir: str, id: str):
@@ -101,16 +67,18 @@ class _PomNode:
         self.properties = None
 
 
-# 解析Maven pom中${}属性引用
-def try_parse_property_reference(properties: {}, version: str) -> str:
-    if version is None:
-        return None
-    if version.startswith("${"):
-        property_key = version[2:len(version) - 1]
-        if property_key not in properties.keys():
-            raise Exception("版本: {version}未找到".format(version=property_key))
-        return properties[property_key]
-    return version
+def build_module_tree_parent(init_node) -> _PomNode:
+    pom_node = _PomNode(init_node, '', generate_module_id(init_node))
+    parent_node = init_node.find("parent", init_node.nsmap)
+    while parent_node is not None:
+        parent_pom_tree = resolve_parent_pom_path(parent_node)
+        node = _PomNode(parent_pom_tree, '',
+                        generate_module_id(parent_pom_tree))
+        node.children_pom.append(pom_node)
+        pom_node.parent_pom = node
+        pom_node = node
+        parent_node = parent_pom_tree.find("parent", parent_pom_tree.nsmap)
+    return pom_node
 
 
 # 按照依赖顺序自顶向下解析各module
@@ -157,18 +125,79 @@ def parse_module_tree(tree_root: _PomNode):
                 version = try_parse_property_reference(
                     node.properties, get_version(dependency))
                 dependency_key = group_id + ":" + artifact_id
+                scope = None
                 if version is None:
                     # 没有填version，那么只可能是(合法的情况)依靠父级pom的dependencyManagement指定版本
                     if dependency_key not in node.dependency_managements.keys():
                         raise Exception("依赖: {dependency}没有版本".format(
                             dependency=dependency_key))
                     version = node.dependency_managements[dependency_key]
-                global need_find_artifact_id
-                global need_find_group_id
-                if group_id == need_find_group_id and artifact_id == need_find_artifact_id:
-                    print("在{id}的dependencies中发现给定依赖, 版本: {version}".format(
-                        id=node.id, version=version))
+                scope_node = dependency.find("scope", node.pom_dom_tree.nsmap)
+                if scope_node is not None:
+                    scope = scope_node.text
+                parse_dependency(group_id, artifact_id, version, scope)
         node_list = new_node_list
+
+
+# 解析一个dependencies中的依赖, 这里还要考虑依赖中的依赖
+def parse_dependency(group_id: str, artifact_id: str, version: str, scope: str):
+    if scope is not None and scope != 'compile':
+        if is_debug_enabled():
+            print("依赖: {groupId}:{artifactId}:{version}的scope为: {scope}, 跳过.".format(groupId=group_id, artifactId=artifact_id, version=version, scope=scope))
+        return
+
+    global need_find_group_id
+    global need_find_artifact_id
+    if group_id == need_find_group_id and artifact_id == need_find_artifact_id:
+        print("发现对指定依赖的引用, 版本: %s" % version)
+
+    jar_pom_location = resolve_jar_pom_location(group_id, artifact_id, version)
+    jar_path = pathlib.Path(jar_pom_location)
+    if not jar_path.exists() or jar_path.is_dir():
+        raise Exception("Jar pom路径: %s不存在或者是个目录" % jar_path)
+    jar_pom_tree = etree.parse(jar_path.open()).getroot()
+
+    # 构建依赖的jar包的依赖树，和主module的依赖树没有关系
+    tree_root = build_module_tree_parent(jar_pom_tree)
+    parse_module_tree(tree_root)
+
+
+def resolve_parent_pom_path(parent_node):
+    group_id = get_group_id(parent_node)
+    artifact_id = get_artifact_id(parent_node)
+    version = get_version(parent_node)
+    group_id = group_id.replace(".", "/")
+    pom_path = "/Users/zhaoxudong/.m2/repo/" + group_id + "/" + artifact_id + \
+        "/" + version + "/" + artifact_id + "-" + version + ".pom"
+    pom = pathlib.Path(pom_path)
+    if (not pom.exists()) or pom.is_dir():
+        raise Exception("Pom: %s不存在或者是一个目录" % pom_path)
+    return etree.parse(pom.open()).getroot()
+
+
+def parse_properties(xml_root) -> {}:
+    result = {}
+    properties_node = xml_root.find("properties", xml_root.nsmap)
+    if properties_node is None:
+        return result
+    properties = properties_node.findall('*', xml_root.nsmap)
+    for node in properties:
+        # 移除tag前的namespace:
+        # https://stackoverflow.com/questions/18159221/remove-namespace-and-prefix-from-xml-in-python-using-lxml
+        result[etree.QName(node).localname] = node.text
+    return result
+
+
+# 解析Maven pom中${}属性引用
+def try_parse_property_reference(properties: {}, version: str) -> str:
+    if version is None:
+        return None
+    if version.startswith("${"):
+        property_key = version[2:len(version) - 1]
+        if property_key not in properties.keys():
+            raise Exception("版本: {version}未找到".format(version=property_key))
+        return properties[property_key]
+    return version
 
 
 # 按照pom继承关系构建树型关系
@@ -179,19 +208,11 @@ def build_module_tree(base_dir: str) -> _PomNode:
         raise Exception("路径: %s不是一个合法的pom.xml文件" % pom_path)
     xml_root = etree.parse(pom_file.open()).getroot()
 
-    pom_node = _PomNode(xml_root, base_dir, generate_module_id(xml_root))
-    child_parent_node = pom_node
-
-    parent_dom_node = xml_root.find("parent", xml_root.nsmap)
-    while parent_dom_node is not None:
-        parent_pom_dom_tree = resolve_parent_pom_path(parent_dom_node)
-        node = _PomNode(parent_pom_dom_tree, '',
-                        generate_module_id(parent_pom_dom_tree))
-        pom_node.parent_pom = node
-        node.children_pom.append(pom_node)
-        pom_node = node
-        parent_dom_node = parent_pom_dom_tree.find(
-            "parent", parent_pom_dom_tree.nsmap)
+    tree_root = build_module_tree_parent(xml_root)
+    child_parent_node = tree_root
+    while len(child_parent_node.children_pom) == 1:
+        child_parent_node = child_parent_node.children_pom[0]
+    child_parent_node.pom_base_dir = base_dir
 
     # 向下再根据子module构建pom tree
     queue = Queue()
@@ -217,7 +238,7 @@ def build_module_tree(base_dir: str) -> _PomNode:
 
     # 从树的根节点开始广度优先遍历，标记每层的level
     i = 0
-    node_list = [pom_node]
+    node_list = [tree_root]
     while len(node_list) > 0:
         new_node_list = list()
         for node in node_list:
@@ -226,7 +247,7 @@ def build_module_tree(base_dir: str) -> _PomNode:
         node_list = new_node_list
         i = i + 1
 
-    return pom_node
+    return tree_root
 
 
 def generate_padding_spaces(level: int) -> str:
@@ -243,7 +264,12 @@ def main():
     arg_parser.add_argument('-g', help='group id', type=str, dest='groupId')
     arg_parser.add_argument('-a', help='artifact id',
                             type=str, dest='artifactId')
+    arg_parser.add_argument("-X", help='debug模式', dest='debug', action='store_true')
     args = arg_parser.parse_args()
+
+    if args.debug:
+        global debug_enabled
+        debug_enabled = True
 
     if not args.groupId:
         print("必须指定搜索的group id!")
