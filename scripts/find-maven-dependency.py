@@ -8,10 +8,13 @@ import argparse
 from lxml import etree
 from queue import Queue
 from queue import LifoQueue
+import os
 
+# 全局变量
 need_find_group_id = ''
 need_find_artifact_id = ''
 debug_enabled = False
+maven_repo = ''
 
 
 def is_debug_enabled() -> bool:
@@ -22,7 +25,8 @@ def is_debug_enabled() -> bool:
 # 解析指定maven依赖在本地仓库中路径
 def resolve_jar_pom_location(group_id: str, artifact_id: str, version: str) -> str:
     group_id = group_id.replace(".", "/")
-    return "/Users/zhaoxudong/.m2/repo/" + group_id + "/" + artifact_id + "/" + version + "/" + artifact_id + "-" + version + ".pom"
+    global maven_repo
+    return maven_repo + "/" + group_id + "/" + artifact_id + "/" + version + "/" + artifact_id + "-" + version + ".pom"
 
 
 def get_group_id(xml_root) -> str:
@@ -200,7 +204,7 @@ def parse_dependency(dependency, nsmap, version: str, context_path: str, exclusi
             exclusions_new.add(group_id + ":" + artifact_id)
 
     # 构建依赖的jar包的依赖树，和主module的依赖树没有关系
-    jar_context_path = "jar[{group_id}:{artifact_id}:{version}]<-{context_path}".format(
+    jar_context_path = "jar[{group_id}:{artifact_id}:{version}] <- {context_path}".format(
         group_id=group_id, artifact_id=artifact_id, version=version,
         context_path=context_path
     )
@@ -214,7 +218,8 @@ def resolve_parent_pom_path(parent_node):
     artifact_id = get_artifact_id(parent_node)
     version = get_version(parent_node)
     group_id = group_id.replace(".", "/")
-    pom_path = "/Users/zhaoxudong/.m2/repo/" + group_id + "/" + artifact_id + \
+    global maven_repo
+    pom_path = maven_repo + "/" + group_id + "/" + artifact_id + \
         "/" + version + "/" + artifact_id + "-" + version + ".pom"
     pom = pathlib.Path(pom_path)
     if (not pom.exists()) or pom.is_dir():
@@ -310,9 +315,15 @@ def generate_padding_spaces(level: int) -> str:
 
 
 def main():
+    global debug_enabled
+    global need_find_group_id
+    global need_find_artifact_id
+    global maven_repo
+
     arg_parser = argparse.ArgumentParser(description="maven依赖查找")
     arg_parser.add_argument('-p', help='maven工程绝对路径', type=str, dest='path')
-    arg_parser.add_argument('-m', help='maven module', type=str, dest='module')
+    arg_parser.add_argument(
+        '-r', help='maven repo path', type=str, dest='repo')
     arg_parser.add_argument('-g', help='group id', type=str, dest='groupId')
     arg_parser.add_argument('-a', help='artifact id',
                             type=str, dest='artifactId')
@@ -321,20 +332,37 @@ def main():
     args = arg_parser.parse_args()
 
     if args.debug:
-        global debug_enabled
         debug_enabled = True
 
     if not args.groupId:
         print("必须指定搜索的group id!")
         return
-    global need_find_group_id
     need_find_group_id = args.groupId
 
     if not args.artifactId:
         print("必须指定搜索的artifact id!")
         return
-    global need_find_artifact_id
     need_find_artifact_id = args.artifactId
+
+    if args.repo is not None:
+        maven_repo = args.repo
+    else:
+        # 尝试解析maven默认配置文件获取repo目录
+        home_path = os.getenv("HOME")
+        default_maven_setting_path = home_path + "/.m2/settings.xml"
+        default_maven_setting_file = pathlib.Path(default_maven_setting_path)
+        if not default_maven_setting_file.exists or default_maven_setting_file.is_dir():
+            print("maven配置文件: %s不存在或者是一个目录." % default_maven_setting_path)
+            return
+        default_maven_setting_tree = etree.parse(
+            default_maven_setting_file.open()).getroot()
+        local_repo_node = default_maven_setting_tree.find(
+            "localRepository", default_maven_setting_tree.nsmap)
+        if local_repo_node is not None:
+            local_repo_path = local_repo_node.text
+        else:
+            local_repo_path = home_path + "/.m2/repository"
+        maven_repo = local_repo_path
 
     path = args.path
     if path is None:
