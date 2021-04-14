@@ -321,9 +321,9 @@ def main():
     global maven_repo
 
     arg_parser = argparse.ArgumentParser(description="maven依赖查找")
-    arg_parser.add_argument('-p', help='maven工程绝对路径', type=str, dest='path')
+    arg_parser.add_argument('-p', help='maven工程绝对路径, 可选, 不设置则使用当前目录', type=str, dest='path')
     arg_parser.add_argument(
-        '-r', help='maven repo path', type=str, dest='repo')
+        '-r', help='maven repo path, 可选, 不设置则读取[$HOME/.m2/settings.xml]以决定仓库位置', type=str, dest='repo')
     arg_parser.add_argument('-g', help='group id', type=str, dest='groupId')
     arg_parser.add_argument('-a', help='artifact id',
                             type=str, dest='artifactId')
