@@ -155,8 +155,9 @@ def parse_module_tree(tree_root: _PomNode, exclusions=set()):
                 if version is None:
                     # 没有填version，那么只可能是(合法的情况)依靠父级pom的dependencyManagement指定版本
                     if dependency_key not in node.dependency_managements.keys():
-                        raise Exception("依赖: {dependency}没有版本".format(
-                            dependency=dependency_key))
+                        print("依赖: {dependency_key}没有设置版本, context: {context}".format(
+                            dependency_key=dependency_key, context=node.context_path))
+                        continue
                     version = node.dependency_managements[dependency_key]
                 parse_dependency(
                     dependency, node.pom_dom_tree.nsmap, version, node.context_path, exclusions)
@@ -321,7 +322,8 @@ def main():
     global maven_repo
 
     arg_parser = argparse.ArgumentParser(description="maven依赖查找")
-    arg_parser.add_argument('-p', help='maven工程绝对路径, 可选, 不设置则使用当前目录', type=str, dest='path')
+    arg_parser.add_argument(
+        '-p', help='maven工程绝对路径, 可选, 不设置则使用当前目录', type=str, dest='path')
     arg_parser.add_argument(
         '-r', help='maven repo path, 可选, 不设置则读取[$HOME/.m2/settings.xml]以决定仓库位置', type=str, dest='repo')
     arg_parser.add_argument('-g', help='group id', type=str, dest='groupId')
