@@ -103,7 +103,7 @@ def inherit_properties(children: {}, parent: {}):
 
 
 # 按照依赖顺序自顶向下解析各module
-def parse_module_tree(tree_root: _PomNode, exclusions=set()):
+def parse_module_tree(tree_root: _PomNode, exclusions=set(), dependency_parsed=set()):
     # 广度优先遍历
     node_list = [tree_root]
     while len(node_list) > 0:
@@ -130,6 +130,12 @@ def parse_module_tree(tree_root: _PomNode, exclusions=set()):
                     for dependency in dependencies_node.findall('dependency', node.pom_dom_tree.nsmap):
                         group_id = get_group_id(dependency)
                         artifact_id = get_artifact_id(dependency)
+                        scope_legal, scope = is_scope_legal(dependency)
+                        if not scope_legal:
+                            if is_debug_enabled():
+                                print("Dependency management: {dependency}的scope为{scope}, 跳过, context: {context}.".format(
+                                    dependency=(group_id + ":" + artifact_id), scope=scope, context=node.context_path))
+                            continue
                         version = try_parse_property_reference(
                             node.properties, get_version(dependency))
                         # dependency managent的版本是可以不填的
@@ -155,50 +161,66 @@ def parse_module_tree(tree_root: _PomNode, exclusions=set()):
                 if version is None:
                     # 没有填version，那么只可能是(合法的情况)依靠父级pom的dependencyManagement指定版本
                     if dependency_key not in node.dependency_managements.keys():
-                        print("依赖: {dependency_key}没有设置版本, context: {context}".format(
-                            dependency_key=dependency_key, context=node.context_path))
+                        if is_debug_enabled():
+                            print("依赖: {dependency_key}没有设置版本, context: {context}".format(
+                                dependency_key=dependency_key, context=node.context_path))
                         continue
                     version = node.dependency_managements[dependency_key]
                 parse_dependency(
-                    dependency, node.pom_dom_tree.nsmap, version, node.context_path, exclusions)
+                    dependency, version, node.context_path, exclusions, dependency_parsed)
         node_list = new_node_list
 
 
+def is_scope_legal(xml_root):
+    scope_node = xml_root.find("scope", xml_root.nsmap)
+    if scope_node is None:
+        return True, None
+    scope = scope_node.text
+    return scope == 'compile', scope
+
+
 # 解析一个dependencies中的依赖, 这里还要考虑依赖中的依赖
-def parse_dependency(dependency, nsmap, version: str, context_path: str, exclusions=set()):
+def parse_dependency(dependency, version: str, context_path: str, exclusions=set(), dependency_parsed=set()):
     group_id = get_group_id(dependency)
     artifact_id = get_artifact_id(dependency)
-    scope_node = dependency.find("scope", nsmap)
-    if scope_node is not None and scope_node.text != 'compile':
+    scope_legal, scope = is_scope_legal(dependency)
+    if not scope_legal:
         if is_debug_enabled():
             print("依赖: {groupId}:{artifactId}:{version}的scope为: {scope}, 跳过.".format(
-                groupId=group_id, artifactId=artifact_id, version=version, scope=scope_node.text))
+                groupId=group_id, artifactId=artifact_id, version=version, scope=scope))
         return
 
-    optional_node = dependency.find("optional", nsmap)
+    optional_node = dependency.find("optional", dependency.nsmap)
     if optional_node is not None and optional_node.text == 'true':
         if is_debug_enabled():
             print("依赖: {groupId}:{artifactId}:{version}的optional = true, 跳过.".format(
                 groupId=group_id, artifactId=artifact_id, version=version))
         return
 
+    parsed_key = group_id + ":" + artifact_id + ":" + version
+    if parsed_key in dependency_parsed:
+        return
+
     global need_find_group_id
     global need_find_artifact_id
     if group_id == need_find_group_id and artifact_id == need_find_artifact_id:
-        print("[{context_path}]: {group_id}:{artifact_id}:{version}".format(
+        print("发现引用: [{context_path}]: {group_id}:{artifact_id}:{version}".format(
             context_path=context_path, group_id=group_id, artifact_id=artifact_id, version=version))
 
     jar_pom_location = resolve_jar_pom_location(group_id, artifact_id, version)
     jar_path = pathlib.Path(jar_pom_location)
     if not jar_path.exists() or jar_path.is_dir():
-        raise Exception("Jar pom路径: %s不存在或者是个目录" % jar_path)
+        print("Jar pom: {path}不存在或者是个目录, 可能此依赖被maven排除了.".format(
+            path=jar_pom_location))
+        return
     jar_pom_tree = etree.parse(jar_path.open()).getroot()
 
     # 解析exclusions
     exclusions_new = exclusions.copy()
-    exclusions_node = dependency.find("exclusions", nsmap)
+    exclusions_node = dependency.find("exclusions", dependency.nsmap)
     if exclusions_node is not None:
-        exclusion_nodes = exclusions_node.findall("exclusion", nsmap)
+        exclusion_nodes = exclusions_node.findall(
+            "exclusion", dependency.nsmap)
         for exclusion_node in exclusion_nodes:
             group_id = get_group_id(exclusion_node)
             artifact_id = get_artifact_id(exclusion_node)
@@ -211,7 +233,9 @@ def parse_dependency(dependency, nsmap, version: str, context_path: str, exclusi
     )
     tree_root = build_module_tree_parent(
         jar_pom_tree, init_context_path=jar_context_path)
-    parse_module_tree(tree_root, exclusions=exclusions_new)
+    dependency_parsed.add(parsed_key)
+    parse_module_tree(tree_root, exclusions=exclusions_new,
+                      dependency_parsed=dependency_parsed)
 
 
 def resolve_parent_pom_path(parent_node):
@@ -253,7 +277,7 @@ def try_parse_property_reference(properties: {}, version: str) -> str:
     while version.startswith("${"):
         property_key = version[2:len(version) - 1]
         if property_key not in properties.keys():
-            raise Exception("版本: {version}未找到".format(version=property_key))
+            return None
         version = properties[property_key]
     return version
 
