@@ -1,0 +1,8 @@
+<!-- 解决高版本maven block http仓库的问题 -->
+<mirror>
+  <id>maven-default-http-blocker</id>
+  <mirrorOf>dummy</mirrorOf>
+  <name>Dummy mirror to override default blocking mirror that blocks http</name>
+  <url>http://0.0.0.0/</url>
+  <blocked>true</blocked>
+</mirror>
