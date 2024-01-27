@@ -1,6 +1,15 @@
 #!/usr/bin/python3
 # -*- coding: UTF-8 -*-
 
+def check_packages():
+    try:
+        exec("import lxml")
+    except ModuleNotFoundError:
+        print("此脚本依赖lxml库, 尝试执行命令: 'pip3 install lxml'.")
+        exit(0)
+
+check_packages()
+
 import pathlib
 import argparse
 # Python3自带的ElementTree需要自己硬编码name space
@@ -60,6 +69,9 @@ def generate_module_id(xml_root) -> str:
 
 class _PomNode:
 
+    # 如果为True, 表示当前pom为工作目录的pom, 其它pom均为间接依赖的pom
+    is_current_pom = False
+
     def __init__(self, pom_dom_tree, pom_base_dir: str, id: str):
         self.pom_dom_tree = pom_dom_tree
         self.pom_base_dir = pom_base_dir
@@ -87,7 +99,7 @@ def build_module_tree_parent(init_node, init_base_dir: str = '', init_context_pa
         parent_pom_tree = resolve_parent_pom_path(parent_node)
         node = _PomNode(parent_pom_tree, '',
                         generate_module_id(parent_pom_tree))
-        node.context_path = node.id + " <- " + pom_node.context_path
+        node.context_path = node.id + " -> " + pom_node.context_path
         node.children_pom.append(pom_node)
         pom_node.parent_pom = node
         pom_node = node
@@ -167,7 +179,7 @@ def parse_module_tree(tree_root: _PomNode, exclusions=set(), dependency_parsed=s
                         continue
                     version = node.dependency_managements[dependency_key]
                 parse_dependency(
-                    dependency, version, node.context_path, exclusions, dependency_parsed)
+                    dependency, version, node.context_path, exclusions, dependency_parsed, node.is_current_pom)
         node_list = new_node_list
 
 
@@ -180,7 +192,7 @@ def is_scope_legal(xml_root):
 
 
 # 解析一个dependencies中的依赖, 这里还要考虑依赖中的依赖
-def parse_dependency(dependency, version: str, context_path: str, exclusions=set(), dependency_parsed=set()):
+def parse_dependency(dependency, version: str, context_path: str, exclusions=set(), dependency_parsed=set(), is_in_current_pom = False):
     group_id = get_group_id(dependency)
     artifact_id = get_artifact_id(dependency)
     scope_legal, scope = is_scope_legal(dependency)
@@ -191,9 +203,9 @@ def parse_dependency(dependency, version: str, context_path: str, exclusions=set
         return
 
     optional_node = dependency.find("optional", dependency.nsmap)
-    if optional_node is not None and optional_node.text == 'true':
+    if not is_in_current_pom and optional_node is not None and optional_node.text == 'true':
         if is_debug_enabled():
-            print("依赖: {groupId}:{artifactId}:{version}的optional = true, 跳过.".format(
+            print("间接依赖: {groupId}:{artifactId}:{version}的optional = true, 跳过.".format(
                 groupId=group_id, artifactId=artifact_id, version=version))
         return
 
@@ -227,7 +239,7 @@ def parse_dependency(dependency, version: str, context_path: str, exclusions=set
             exclusions_new.add(group_id + ":" + artifact_id)
 
     # 构建依赖的jar包的依赖树，和主module的依赖树没有关系
-    jar_context_path = "jar[{group_id}:{artifact_id}:{version}] <- {context_path}".format(
+    jar_context_path = "{context_path} -> jar[{group_id}:{artifact_id}:{version}]".format(
         group_id=group_id, artifact_id=artifact_id, version=version,
         context_path=context_path
     )
@@ -294,6 +306,8 @@ def build_module_tree(base_dir: str) -> _PomNode:
     child_parent_node = tree_root
     while len(child_parent_node.children_pom) == 1:
         child_parent_node = child_parent_node.children_pom[0]
+
+    child_parent_node.is_current_pom = True
 
     # 向下再根据子module构建pom tree
     queue = Queue()
@@ -418,6 +432,5 @@ def main():
         print("------------------------------------------")
 
     parse_module_tree(tree_head)
-
 
 main()
