@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["-p", "~/Projects/test-dependency", "-g", "'org.springframework'", "-a", "'spring-webmvc'"]
+            "args": ["-p", "/Users/zhaoxudong/IdeaProjects/WebDemo", "-g", "com.fasterxml.jackson.core", "-a", "jackson-core"]
         }
     ]
 }
