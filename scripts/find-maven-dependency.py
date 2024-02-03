@@ -142,7 +142,7 @@ def parse_module_tree(tree_root: _PomNode, exclusions=set(), dependency_parsed=s
                     for dependency in dependencies_node.findall('dependency', node.pom_dom_tree.nsmap):
                         group_id = get_group_id(dependency)
                         artifact_id = get_artifact_id(dependency)
-                        scope_legal, scope = is_scope_legal(dependency)
+                        scope_legal, scope = is_scope_transitive(dependency)
                         if not scope_legal:
                             if is_debug_enabled():
                                 print("Dependency management: {dependency}的scope为{scope}, 跳过, context: {context}.".format(
@@ -183,22 +183,27 @@ def parse_module_tree(tree_root: _PomNode, exclusions=set(), dependency_parsed=s
         node_list = new_node_list
 
 
-def is_scope_legal(xml_root):
+def is_scope_transitive(xml_root):
     scope_node = xml_root.find("scope", xml_root.nsmap)
     if scope_node is None:
         return True, None
+    
     scope = scope_node.text
-    return scope == 'compile', scope
+    if scope == 'system':
+        raise Exception("暂不支持scope为system的依赖")
+
+    return scope == 'compile' or scope == 'runtime', scope
 
 
 # 解析一个dependencies中的依赖, 这里还要考虑依赖中的依赖
 def parse_dependency(dependency, version: str, context_path: str, exclusions=set(), dependency_parsed=set(), is_in_current_pom = False):
     group_id = get_group_id(dependency)
     artifact_id = get_artifact_id(dependency)
-    scope_legal, scope = is_scope_legal(dependency)
-    if not scope_legal:
+    scope_transitive, scope = is_scope_transitive(dependency)
+
+    if not is_in_current_pom and not scope_transitive:
         if is_debug_enabled():
-            print("依赖: {groupId}:{artifactId}:{version}的scope为: {scope}, 跳过.".format(
+            print("间接依赖: {groupId}:{artifactId}:{version}的scope = {scope}, 跳过.".format(
                 groupId=group_id, artifactId=artifact_id, version=version, scope=scope))
         return
 
@@ -431,6 +436,9 @@ def main():
                 stack.put(childNode)
         print("------------------------------------------")
 
-    parse_module_tree(tree_head)
+    try:
+        parse_module_tree(tree_head)
+    except Exception as e:
+        print("依赖查询失败: {reason}".format(reason=str(e)))
 
 main()
