@@ -13,4 +13,3 @@
             "args": ["-p", "~/IdeaProjects/WebDemo", "-g", "com.fasterxml.jackson.core", "-a", "jackson-core"]
         }
     ]
-}

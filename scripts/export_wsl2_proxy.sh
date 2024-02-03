@@ -1,15 +1,17 @@
-#!/bin/bash
+#!/bin/sh
 
 # 使用source命令执行此脚本！
 
-# Trojan-qt5默认
-port=58591
+# clashx
+port=7890
 if [ $# -eq 1 ];
 then
     port=$1
 fi
 
-host_ip=`cat /etc/resolv.conf | grep nameserver | awk '{print $2}'`
+# sed used to remove the leading blank space and the trailing '^M' windows controll character
+host_ip=`ipconfig.exe | grep 'IPv4 Address' | cut -d ':' -f 2 | sed 's/^.//;s/.$//'`
+
 echo "Windows物理机IP: $host_ip"
 
 echo "代理端口: $port"
